@@ -19,7 +19,7 @@ Everything runs locally. No data ever leaves the user's device.
 
 ## Architecture
 
-![Architecture](/home/malinred/Documents/autofiller_architecture_bw.svg)
+![Architecture](./assets/autofiller_architecture_bw.svg)
 
 ---
 
