@@ -26,8 +26,7 @@ def fix_orientation(img_pil):
 
 def deskew(img_cv):
     """
-    Step 2 — Fix small tilts (1-10 degrees) using Hough line detection.
-    This is separate from orientation — handles slight camera tilt.
+    Step 2 — Fix tilts. Now handles 90-degree rotations if OSD fails.
     """
     gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
@@ -41,7 +40,8 @@ def deskew(img_cv):
             angles.append(angle)
         median_angle = np.median(angles)
         print(f"[Deskew] Detected skew angle: {median_angle:.2f} degrees")
-        # Only deskew if tilt is significant but not a full rotation
+        
+        # Correct for small tilts
         if 0.5 < abs(median_angle) < 45:
             h, w = img_cv.shape[:2]
             center = (w // 2, h // 2)
@@ -50,8 +50,15 @@ def deskew(img_cv):
                                      flags=cv2.INTER_CUBIC,
                                      borderMode=cv2.BORDER_REPLICATE)
             print(f"[Deskew] Corrected skew by {median_angle:.2f} degrees")
+        # Correct for 90-degree rotations (common if OSD fails)
+        elif abs(abs(median_angle) - 90) < 5:
+            print("[Deskew] Significant 90-degree rotation detected. Correcting...")
+            if median_angle < 0:
+                img_cv = cv2.rotate(img_cv, cv2.ROTATE_90_CLOCKWISE)
+            else:
+                img_cv = cv2.rotate(img_cv, cv2.ROTATE_90_COUNTERCLOCKWISE)
         else:
-            print("[Deskew] No significant skew detected, skipping")
+            print("[Deskew] No actionable skew detected, skipping")
     else:
         print("[Deskew] No lines detected, skipping")
     return img_cv
@@ -105,7 +112,7 @@ def upscale_if_needed(img_pil, min_size=1000):
     return img_pil
 
 
-def preprocess_document(image_path):
+def preprocess_document(image_input):
     """
     Full preprocessing pipeline:
     1. Fix orientation (OSD)
@@ -115,10 +122,13 @@ def preprocess_document(image_path):
     5. Enhance contrast
     6. Upscale if needed
     """
-    print(f"\n--- Preprocessing: {image_path} ---")
+    if isinstance(image_input, str):
+        print(f"\n--- Preprocessing: {image_input} ---")
+        img_pil = Image.open(image_input).convert("RGB")
+    else:
+        print("\n--- Preprocessing: Image Object ---")
+        img_pil = image_input.convert("RGB")
 
-    # Load as PIL RGB
-    img_pil = Image.open(image_path).convert("RGB")
     print(f"[Load] Original size: {img_pil.size}")
 
     # Step 1 — Fix orientation using Tesseract OSD
@@ -149,91 +159,102 @@ def preprocess_document(image_path):
     return img_pil
 
 
-# -----------------------------------------------------------------------
-# Main inference pipeline
-# -----------------------------------------------------------------------
+def get_ocr_words_and_boxes(image):
+    """
+    Run Tesseract OCR to get words and bounding boxes normalized to 0-1000.
+    """
+    ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
-model = LayoutLMv3ForTokenClassification.from_pretrained("./model_info/checkpoint-800")
-processor = LayoutLMv3Processor.from_pretrained("./model_info/checkpoint-800")
+    # Extract valid words and their bounding boxes
+    words = []
+    boxes = []
 
-# Preprocess the document
-image = preprocess_document("sample_form.jpg")
+    width, height = image.size
 
-# Run Tesseract OCR to get words and bounding boxes
-ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    for i, word in enumerate(ocr_data["text"]):
+        if word.strip() != "":
+            words.append(word)
+            x, y, w, h = (ocr_data["left"][i], ocr_data["top"][i],
+                          ocr_data["width"][i], ocr_data["height"][i])
+            box = [
+                int(1000 * x / width),
+                int(1000 * y / height),
+                int(1000 * (x + w) / width),
+                int(1000 * (y + h) / height)
+            ]
+            boxes.append(box)
+    
+    return words, boxes
 
-# Extract valid words and their bounding boxes
-words = []
-boxes = []
 
-for i, word in enumerate(ocr_data["text"]):
-    if word.strip() != "":
-        words.append(word)
-        x, y, w, h = (ocr_data["left"][i], ocr_data["top"][i],
-                      ocr_data["width"][i], ocr_data["height"][i])
-        width, height = image.size
-        box = [
-            int(1000 * x / width),
-            int(1000 * y / height),
-            int(1000 * (x + w) / width),
-            int(1000 * (y + h) / height)
-        ]
-        boxes.append(box)
+if __name__ == "__main__":
+    # -----------------------------------------------------------------------
+    # Main inference pipeline
+    # -----------------------------------------------------------------------
 
-# Pass to processor
-encoding = processor(
-    image,
-    text=words,
-    boxes=boxes,
-    return_tensors="pt"
-)
+    model = LayoutLMv3ForTokenClassification.from_pretrained("./model_info/checkpoint-800")
+    processor = LayoutLMv3Processor.from_pretrained("./model_info/checkpoint-800")
 
-# Run inference
-with torch.no_grad():
-    outputs = model(**encoding)
+    # Preprocess the document
+    image = preprocess_document("sample_form.jpg")
 
-predictions = outputs.logits.argmax(-1).squeeze().tolist()
-tokens = processor.tokenizer.convert_ids_to_tokens(
-    encoding["input_ids"].squeeze().tolist()
-)
+    # Run Tesseract OCR to get words and bounding boxes
+    words, boxes = get_ocr_words_and_boxes(image)
 
-# -----------------------------------------------------------------------
-# Post processing — group tokens into key-value pairs
-# -----------------------------------------------------------------------
+    # Pass to processor
+    encoding = processor(
+        image,
+        text=words,
+        boxes=boxes,
+        return_tensors="pt"
+    )
 
-id2label = model.config.id2label
+    # Run inference
+    with torch.no_grad():
+        outputs = model(**encoding)
 
-current_word = ""
-current_label = ""
-results = []
+    predictions = outputs.logits.argmax(-1).squeeze().tolist()
+    tokens = processor.tokenizer.convert_ids_to_tokens(
+        encoding["input_ids"].squeeze().tolist()
+    )
 
-for token, pred in zip(tokens, predictions):
-    label = id2label[pred]
+    # -----------------------------------------------------------------------
+    # Post processing — group tokens into key-value pairs
+    # -----------------------------------------------------------------------
 
-    if token in ["<s>", "</s>", "<pad>"]:
-        continue
+    id2label = model.config.id2label
 
-    clean_token = token.replace("Ġ", " ").strip()
+    current_word = ""
+    current_label = ""
+    results = []
 
-    if label.startswith("B-"):
-        if current_word:
-            results.append((current_word.strip(), current_label))
-        current_word = clean_token
-        current_label = label[2:]
-    elif label.startswith("I-"):
-        current_word += clean_token
-    else:
-        if current_word:
-            results.append((current_word.strip(), current_label))
-        current_word = ""
-        current_label = ""
+    for token, pred in zip(tokens, predictions):
+        label = id2label[pred]
 
-# Print raw token labels
-print("--- Raw Token Labels ---")
-for token, pred in zip(tokens, predictions):
-    print(f"{token}: {id2label[pred]}")
+        if token in ["<s>", "</s>", "<pad>"]:
+            continue
 
-# Print grouped key-value results
-print("\n--- Extracted Fields ---")
-for text, label in results:
-    print(f"{label}: {text}")
+        clean_token = token.replace("Ġ", " ").strip()
+
+        if label.startswith("B-"):
+            if current_word:
+                results.append((current_word.strip(), current_label))
+            current_word = clean_token
+            current_label = label[2:]
+        elif label.startswith("I-"):
+            current_word += clean_token
+        else:
+            if current_word:
+                results.append((current_word.strip(), current_label))
+            current_word = ""
+            current_label = ""
+
+    # Print raw token labels
+    print("--- Raw Token Labels ---")
+    for token, pred in zip(tokens, predictions):
+        print(f"{token}: {id2label[pred]}")
+
+    # Print grouped key-value results
+    print("\n--- Extracted Fields ---")
+    for text, label in results:
+        print(f"{label}: {text}")
