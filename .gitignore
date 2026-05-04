@@ -2,3 +2,8 @@ uv.lock
 pyproject.toml
 .venv
 model_info/
+practice_form.pdf
+__pycache__/
+test.png
+complex_invoice.png
+sample_form.jpg

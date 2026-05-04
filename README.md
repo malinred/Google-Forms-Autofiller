@@ -151,3 +151,14 @@ Labels are mapped as follows:
 - Model accuracy depends on document quality and type — documents similar to standard forms perform best
 - Google Forms DOM structure may change over time, requiring extension updates
 - The local server must be running for the extension to function
+
+---
+
+## TODO
+
+- [ ] **Profile Management:** Enable editing of data within already saved profiles.
+- [ ] **Perspective Correction:** Implement 2D feature-based alignment (perspective correction using homography) to handle angled photos.
+- [ ] **Document Classification:**
+    - [ ] Check if feature detection for document type matching is viable.
+    - [ ] If viable, decide which templates to use (e.g., Passport, Driver's License).
+    - [ ] If viable, implement rule-based information extraction or explore YOLO (though less likely).
