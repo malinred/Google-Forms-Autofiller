@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import torch
 import uvicorn
+import cv2
 
 # Import inference functions from existing modules
 from main import run_inference
@@ -59,32 +60,42 @@ async def upload_document(file: UploadFile = File(...)):
             
             for page_num in range(len(doc)):
                 page = doc[page_num]
-                pix = page.get_pixmap(dpi=300)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 
-                # Try native PDF text first (fastest/most accurate)
-                words_data = page.get_text("words")
+                # Step 0: PDF Page Routing
+                native_text = page.get_text("text").strip()
                 
-                if not words_data:
-                    # Fallback to OCR if no native text
-                    processed_img = preprocess_document(img)
-                    words, boxes = get_ocr_words_and_boxes(processed_img)
-                    page_img = processed_img
-                else:
+                if native_text:
+                    # Page has a readable text layer
+                    print(f"[Server] PDF Page {page_num + 1}: Using native text layer")
+                    words_data = page.get_text("words")
                     words = []
                     boxes = []
                     p_width, p_height = page.rect.width, page.rect.height
                     for wd in words_data:
                         # wd: (x0, y0, x1, y1, "word", block_no, line_no, word_no)
                         words.append(wd[4])
+                        # Normalize and CLIP for LayoutLMv3
                         box = [
-                            int(1000 * wd[0] / p_width),
-                            int(1000 * wd[1] / p_height),
-                            int(1000 * wd[2] / p_width),
-                            int(1000 * wd[3] / p_height)
+                            max(0, min(1000, int(1000 * wd[0] / p_width))),
+                            max(0, min(1000, int(1000 * wd[1] / p_height))),
+                            max(0, min(1000, int(1000 * wd[2] / p_width))),
+                            max(0, min(1000, int(1000 * wd[3] / p_height)))
                         ]
                         boxes.append(box)
-                    page_img = img
+                    
+                    # For native text, we still need a background image for LayoutLMv3
+                    pix = page.get_pixmap(dpi=300)
+                    page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                else:
+                    # Page is image-only, use OCR pipeline
+                    print(f"[Server] PDF Page {page_num + 1}: Image-only, using OCR pipeline")
+                    pix = page.get_pixmap(dpi=300)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    
+                    processed_img_bgr = preprocess_document(img)
+                    words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
+                    # Convert BGR back to RGB PIL for LayoutLMv3
+                    page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
                 
                 pairs = run_inference(page_img, words, boxes)
                 final_results.append({"page": page_num + 1, "pairs": pairs})
@@ -92,9 +103,11 @@ async def upload_document(file: UploadFile = File(...)):
         else:
             # Handle Image
             print(f"[Server] Processing Image: {file.filename}")
-            processed_img = preprocess_document(file_path)
-            words, boxes = get_ocr_words_and_boxes(processed_img)
-            pairs = run_inference(processed_img, words, boxes)
+            processed_img_bgr = preprocess_document(file_path)
+            words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
+            # Convert BGR back to RGB PIL for LayoutLMv3
+            page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
+            pairs = run_inference(page_img, words, boxes)
             final_results.append({"page": 1, "pairs": pairs})
 
         return {

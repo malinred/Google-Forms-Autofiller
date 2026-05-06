@@ -5,6 +5,7 @@ from PIL import Image
 import torch
 from transformers import LayoutLMv3Processor, LayoutLMv3ForTokenClassification
 import numpy as np
+import cv2
 
 from model_test_inference import (
     preprocess_document, 
@@ -168,15 +169,18 @@ def run_inference(image, words, boxes):
         image,
         text=words,
         boxes=boxes,
+        truncation=True,
+        max_length=512,
         return_tensors="pt"
     )
 
     with torch.no_grad():
         outputs = model(**encoding)
 
-    predictions = outputs.logits.argmax(-1).squeeze().tolist()
+    # Use squeeze(0) to only remove batch dimension, avoids 0-dim tensor issues
+    predictions = outputs.logits.argmax(-1).squeeze(0).tolist()
     tokens = processor.tokenizer.convert_ids_to_tokens(
-        encoding["input_ids"].squeeze().tolist()
+        encoding["input_ids"].squeeze(0).tolist()
     )
     
     entities = get_entities(tokens, predictions, encoding)
@@ -198,38 +202,39 @@ def main():
             print(f"\n--- Processing PDF Page {page_num + 1} ---")
             page = doc[page_num]
             
-            # Use 300 DPI for rendering
-            pix = page.get_pixmap(dpi=300)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            # Step 0: PDF Page Routing
+            native_text = page.get_text("text").strip()
             
-            # Attempt native text extraction
-            words_data = page.get_text("words")
-            
-            if not words_data:
-                print("[PDF] No native text found, falling back to OCR")
-                # For OCR, we use the preprocessing pipeline
-                processed_img = preprocess_document(img)
-                words, boxes = get_ocr_words_and_boxes(processed_img)
-                print(f"[Debug] OCR Words found: {words}")
-                # Use processed image for inference
-                page_img = processed_img
-            else:
-                print(f"[PDF] Found {len(words_data)} native words")
+            if native_text:
+                print(f"[PDF] Page {page_num + 1}: Using native text layer")
+                words_data = page.get_text("words")
                 words = []
                 boxes = []
                 p_width, p_height = page.rect.width, page.rect.height
                 for wd in words_data:
                     # wd: (x0, y0, x1, y1, "word", block_no, line_no, word_no)
                     words.append(wd[4])
+                    # Normalize and CLIP for LayoutLMv3
                     box = [
-                        int(1000 * wd[0] / p_width),
-                        int(1000 * wd[1] / p_height),
-                        int(1000 * wd[2] / p_width),
-                        int(1000 * wd[3] / p_height)
+                        max(0, min(1000, int(1000 * wd[0] / p_width))),
+                        max(0, min(1000, int(1000 * wd[1] / p_height))),
+                        max(0, min(1000, int(1000 * wd[2] / p_width))),
+                        max(0, min(1000, int(1000 * wd[3] / p_height)))
                     ]
                     boxes.append(box)
-                # For native text, we still use the rendered image
-                page_img = img
+                
+                # Render page for LayoutLMv3 background
+                pix = page.get_pixmap(dpi=300)
+                page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            else:
+                print(f"[PDF] Page {page_num + 1}: No native text found, using OCR pipeline")
+                pix = page.get_pixmap(dpi=300)
+                img_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                
+                processed_img_bgr = preprocess_document(img_pil)
+                words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
+                # Convert BGR back to RGB PIL for LayoutLMv3
+                page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
             
             pairs = run_inference(page_img, words, boxes)
             
@@ -242,9 +247,11 @@ def main():
     else:
         # Assume Image input
         print(f"[Image] Processing: {file_path}")
-        img = preprocess_document(file_path)
-        words, boxes = get_ocr_words_and_boxes(img)
-        pairs = run_inference(img, words, boxes)
+        processed_img_bgr = preprocess_document(file_path)
+        words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
+        # Convert BGR back to RGB PIL for LayoutLMv3
+        page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
+        pairs = run_inference(page_img, words, boxes)
         
         if pairs:
             print("\nExtracted Fields:")

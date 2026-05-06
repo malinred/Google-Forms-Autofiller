@@ -4,7 +4,19 @@
     booktitle = {Accepted to ICDAR-OST},
     year = {2019}
 }
-
+@article{KAUR2020103672,
+title = {Modified Sauvola binarization for degraded document images},
+journal = {Engineering Applications of Artificial Intelligence},
+volume = {92},
+pages = {103672},
+year = {2020},
+issn = {0952-1976},
+doi = {https://doi.org/10.1016/j.engappai.2020.103672},
+url = {https://www.sciencedirect.com/science/article/pii/S0952197620301159},
+author = {Amandeep Kaur and Usha Rani and Gurpreet Singh Josan},
+keywords = {Binarization techniques, Degraded document images, Historical documents, Stroke width transform},
+abstract = {The binarization of historical documents is a difficult job due to the presence of many degradations. Many existing local binarization techniques use certain manually adjusted parameters. The output of these techniques is much dependent on the value of these parameters. One of such parameters is window size which is kept fixed for the whole text image. The fixed window size will not be able to perform well for images having variable stroke widths and text sizes. The proposed binarization technique (Modified Sauvola) is the modification of state of art Sauvola’s binarization technique. It automatically computes window size dynamically across the image pixel to pixel using the stroke width transform (SWT). This led to reduction in number of manually adjusted parameters. The results are compared with the nine existing techniques using the quantitative measures: FM, PSNR, NRM, MPM, and DRD. The results show that the proposed method outperforms existing methods for images having variable stroke widths and text sizes.}
+}
 
 
 

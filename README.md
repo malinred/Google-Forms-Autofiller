@@ -30,7 +30,7 @@ Everything runs locally. No data ever leaves the user's device.
 1. User opens the web UI at `localhost:8000`
 2. User uploads one or more documents (PDF, JPG, PNG)
 3. The local FastAPI server receives the document
-4. Tesseract OCR extracts raw text and bounding box coordinates from the document
+4. PaddleOCR extracts raw text and bounding box coordinates from the document
 5. The fine-tuned LayoutLMv3 model processes the OCR output (text + layout) and identifies key-value pairs
 6. Extracted fields are returned to the web UI for user review and correction
 7. Confirmed fields are saved to the local SQLite database
@@ -56,11 +56,13 @@ Everything runs locally. No data ever leaves the user's device.
 - Exposes REST API endpoints for the Chrome extension
 - Manages the local SQLite database
 - Runs as a background service on the user's machine
-
-### 2. OCR Engine (Tesseract)
-- Extracts raw text from uploaded document images
-- Provides bounding box coordinates for each word
-- Output feeds directly into the LayoutLMv3 model
+| OCR | PaddleOCR (with EasyOCR fallback) |
+...
+### 2. OCR Engine (PaddleOCR / EasyOCR)
+- Primarily uses PaddleOCR for high-performance extraction.
+- **Stable Fallback:** Automatically switches to EasyOCR if the PaddlePaddle runtime encounters environment-specific errors (common on some CPUs/Python versions).
+- Extracts raw text and provides bounding box coordinates.
+- Output feeds directly into the LayoutLMv3 model.
 
 ### 3. Document Understanding Model (LayoutLMv3)
 - Fine-tuned on the FUNSD dataset for form key-value extraction
@@ -125,8 +127,9 @@ Labels are mapped as follows:
 
 | Component | Technology |
 |---|---|
+| Runtime | Python 3.12 (Mandatory) |
 | Local Server | Python, FastAPI |
-| OCR | Tesseract (pytesseract) |
+| OCR | PaddleOCR |
 | Document Model | LayoutLMv3 (HuggingFace Transformers) |
 | Model Training | PyTorch, HuggingFace Trainer API |
 | Database | SQLite |
@@ -151,6 +154,7 @@ Labels are mapped as follows:
 - Model accuracy depends on document quality and type — documents similar to standard forms perform best
 - Google Forms DOM structure may change over time, requiring extension updates
 - The local server must be running for the extension to function
+- **Python 3.13 Compatibility:** Python 3.13 is currently unsupported due to a `NotImplementedError` in the PaddlePaddle 3.x runtime. Use Python 3.12 for a stable environment.
 
 ---
 
