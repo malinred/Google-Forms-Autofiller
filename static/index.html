@@ -39,7 +39,6 @@
         .btn-success { background: #1e8e3e; }
         .btn-success:hover { background: #137333; }
         .btn-danger { background: #d93025; padding: 0.4rem 0.8rem; font-size: 0.8rem; }
-        
         #loading { display: none; margin-top: 2rem; text-align: center; }
         .spinner {
             border: 4px solid #f3f3f3;
@@ -53,12 +52,10 @@
             margin-right: 10px;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
         #results { margin-top: 3rem; }
         table { width: 100%; border-collapse: collapse; margin-top: 1rem; background: white; border: 1px solid #e0e0e0; }
         th, td { text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid #e0e0e0; }
         th { background: #f8f9fa; font-weight: 600; color: #5f6368; text-transform: uppercase; font-size: 0.85rem; }
-        
         input[type="text"] {
             width: 100%;
             padding: 0.6rem;
@@ -68,12 +65,7 @@
             font-size: 0.95rem;
             transition: border-color 0.2s;
         }
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #1a73e8;
-            background-color: #f8faff;
-        }
-        
+        input[type="text"]:focus { outline: none; border-color: #1a73e8; background-color: #f8faff; }
         .page-header { 
             background: #e8f0fe; 
             color: #1967d2; 
@@ -86,8 +78,25 @@
             align-items: center;
         }
         .error-message { color: #d93025; background: #fce8e6; padding: 1rem; border-radius: 6px; border-left: 4px solid #d93025; margin-top: 1rem; }
-
-        /* Modal Styles */
+        .success-toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: #1e8e3e;
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-weight: 600;
+            z-index: 9999;
+            animation: fadeInOut 3s ease forwards;
+        }
+        @keyframes fadeInOut {
+            0%   { opacity: 0; transform: translateY(10px); }
+            15%  { opacity: 1; transform: translateY(0); }
+            75%  { opacity: 1; }
+            100% { opacity: 0; }
+        }
         dialog {
             border: none;
             border-radius: 8px;
@@ -95,9 +104,7 @@
             padding: 2rem;
             width: 400px;
         }
-        dialog::backdrop {
-            background: rgba(0,0,0,0.5);
-        }
+        dialog::backdrop { background: rgba(0,0,0,0.5); }
         .modal-header { margin-bottom: 1.5rem; }
         .modal-body { margin-bottom: 1.5rem; }
         .modal-footer { display: flex; justify-content: flex-end; gap: 10px; }
@@ -110,33 +117,33 @@
             border-radius: 4px;
             font-size: 1rem;
         }
+        .empty-state { color: #9aa0a6; font-style: italic; padding: 1.5rem; text-align: center; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Document Processor</h1>
-        <p>Extract structured information from your documents using AI. You can review and edit the results below.</p>
-        
-        <div id="upload-area" onclick="document.getElementById('file-input').click()">
-            <img src="https://www.gstatic.com/images/branding/product/2x/drive_2020q4_48dp.png" alt="Upload Icon" style="margin-bottom: 1rem;">
-            <p style="font-size: 1.1rem; color: #5f6368;">Drop your document here or click to browse</p>
+        <p>Extract structured information from your documents using AI. You can review and edit the results before saving.</p>
+
+        <div id="upload-area">
+            <p style="font-size: 1.1rem; color: #5f6368;">&#128196; Drop your document here or click to browse</p>
             <p style="font-size: 0.9rem; color: #9aa0a6;">Supports JPG, PNG, and PDF</p>
             <input type="file" id="file-input" accept="image/*,.pdf">
-            <button class="btn">Select File</button>
+            <button class="btn" type="button" onclick="document.getElementById('file-input').click(); event.stopPropagation();">Select File</button>
         </div>
-        
+
         <div id="loading">
             <div class="spinner"></div>
             <span>Analyzing document structure and extracting fields...</span>
         </div>
-        
+
         <div id="results"></div>
     </div>
 
     <!-- Save Profile Modal -->
     <dialog id="save-modal">
         <div class="modal-header">
-            <h3>Save to Profile</h3>
+            <h3 style="margin:0;">Save to Profile</h3>
         </div>
         <div class="modal-body">
             <div class="form-group">
@@ -147,12 +154,13 @@
             </div>
             <div class="form-group" id="new-profile-group">
                 <label for="new-profile-name">New Profile Name</label>
-                <input type="text" id="new-profile-name" placeholder="e.g., personal, work">
+                <input type="text" id="new-profile-name" placeholder="e.g., ayush, personal, work">
+                <p style="font-size:0.8rem; color:#9aa0a6; margin-top:4px;">Only letters, numbers, hyphens and underscores allowed.</p>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="document.getElementById('save-modal').close()">Cancel</button>
-            <button class="btn btn-success" onclick="confirmSave()">Confirm Save</button>
+            <button class="btn btn-secondary" type="button" onclick="document.getElementById('save-modal').close()">Cancel</button>
+            <button class="btn btn-success" type="button" onclick="confirmSave()">Confirm Save</button>
         </div>
     </dialog>
 
@@ -168,102 +176,123 @@
 
         let currentData = null;
 
+        // --- Drag & Drop ---
+        uploadArea.addEventListener('click', (e) => {
+            // Prevent double-trigger when clicking the button inside
+            if (e.target.tagName !== 'BUTTON') {
+                document.getElementById('file-input').click();
+            }
+        });
+
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.style.background = '#e8f0fe';
         });
 
         uploadArea.addEventListener('dragleave', () => {
-            uploadArea.style.background = 'white';
+            uploadArea.style.background = '';
         });
 
         uploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
-            uploadArea.style.background = 'white';
+            uploadArea.style.background = '';
             const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                fileInput.files = files;
-                handleUpload(files[0]);
-            }
+            if (files.length > 0) handleUpload(files[0]);
         });
 
         fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) handleUpload(file);
+            if (e.target.files[0]) handleUpload(e.target.files[0]);
         });
 
+        // --- Upload & Process ---
         async function handleUpload(file) {
+            const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+            if (!allowed.includes(file.type)) {
+                showError('Unsupported file type. Please upload a JPG, PNG, or PDF.');
+                return;
+            }
+
             const formData = new FormData();
             formData.append('file', file);
 
             loading.style.display = 'block';
             resultsDiv.innerHTML = '';
-            
+            currentData = null;
+
             try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
+                const response = await fetch('/upload', { method: 'POST', body: formData });
                 if (!response.ok) {
                     const errorData = await response.json();
                     throw new Error(errorData.detail || 'Processing failed');
                 }
-                
                 currentData = await response.json();
                 renderResults();
             } catch (err) {
-                resultsDiv.innerHTML = `<div class="error-message"><strong>Error:</strong> ${err.message}</div>`;
+                showError(err.message);
             } finally {
                 loading.style.display = 'none';
                 fileInput.value = '';
             }
         }
 
+        // --- Render Results Table ---
         function renderResults() {
             if (!currentData) return;
 
-            let html = `<div style="display: flex; justify-content: space-between; align-items: center;">
-                <h2>Results for: ${currentData.filename}</h2>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn btn-secondary" onclick="window.print()">Print</button>
-                    <button class="btn btn-success" onclick="saveProfile()">Save Profile</button>
-                </div>
-            </div>`;
-            
+            // Escape HTML to prevent XSS from extracted text
+            const esc = (str) => String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+            let html = `
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <h2 style="margin:0;">Results: ${esc(currentData.filename)}</h2>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn btn-secondary" type="button" onclick="window.print()">&#128438; Print</button>
+                        <button class="btn btn-success" type="button" onclick="saveProfile()">&#128190; Save Profile</button>
+                    </div>
+                </div>`;
+
             currentData.results.forEach((res, pageIdx) => {
+                const hasPairs = res.pairs && res.pairs.length > 0;
                 html += `
                 <div class="page-header">
                     <span>Page ${res.page}</span>
-                    <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 0.8rem;" onclick="addNewField(${pageIdx})">+ Add Field</button>
+                    <button class="btn btn-secondary" type="button" style="padding:4px 12px; font-size:0.8rem;" onclick="addNewField(${pageIdx})">+ Add Field</button>
                 </div>
                 <table id="table-page-${pageIdx}">
                     <thead>
                         <tr>
-                            <th style="width: 40%">Field Name (Key)</th>
-                            <th style="width: 50%">Extracted Value (Answer)</th>
-                            <th style="width: 10%">Action</th>
+                            <th style="width:38%">Field Name (Key)</th>
+                            <th style="width:50%">Extracted Value</th>
+                            <th style="width:12%">Action</th>
                         </tr>
                     </thead>
                     <tbody>`;
-                
-                res.pairs.forEach((pair, pairIdx) => {
-                    html += `
-                    <tr data-page="${pageIdx}" data-pair="${pairIdx}">
-                        <td><input type="text" value="${pair[0]}" onchange="updateValue(${pageIdx}, ${pairIdx}, 0, this.value)" placeholder="Field name..."></td>
-                        <td><input type="text" value="${pair[1]}" onchange="updateValue(${pageIdx}, ${pairIdx}, 1, this.value)" placeholder="Value..."></td>
-                        <td><button class="btn btn-danger" onclick="removeField(${pageIdx}, ${pairIdx})">Delete</button></td>
-                    </tr>`;
-                });
-                
+
+                if (hasPairs) {
+                    res.pairs.forEach((pair, pairIdx) => {
+                        html += `
+                        <tr>
+                            <td><input type="text" value="${esc(pair[0])}" onchange="updateValue(${pageIdx}, ${pairIdx}, 0, this.value)" placeholder="Field name..."></td>
+                            <td><input type="text" value="${esc(pair[1])}" onchange="updateValue(${pageIdx}, ${pairIdx}, 1, this.value)" placeholder="Value..."></td>
+                            <td><button class="btn btn-danger" type="button" onclick="removeField(${pageIdx}, ${pairIdx})">Delete</button></td>
+                        </tr>`;
+                    });
+                } else {
+                    html += `<tr><td colspan="3" class="empty-state">No fields extracted from this page. Use "+ Add Field" to add manually.</td></tr>`;
+                }
+
                 html += `</tbody></table>`;
             });
-            
+
             resultsDiv.innerHTML = html;
         }
 
-        function updateValue(pageIdx, pairIdx, type, value) {
-            currentData.results[pageIdx].pairs[pairIdx][type] = value;
+        function updateValue(pageIdx, pairIdx, colIdx, value) {
+            currentData.results[pageIdx].pairs[pairIdx][colIdx] = value;
         }
 
         function addNewField(pageIdx) {
@@ -276,35 +305,29 @@
             renderResults();
         }
 
+        // --- Save Profile Modal ---
         function toggleNewProfileInput() {
-            if (profileSelect.value === "NEW") {
-                newProfileGroup.style.display = "block";
-            } else {
-                newProfileGroup.style.display = "none";
-            }
+            newProfileGroup.style.display = profileSelect.value === "NEW" ? "block" : "none";
         }
 
         async function saveProfile() {
             if (!currentData) return;
-            
             try {
-                // Fetch existing profiles
                 const response = await fetch('/profiles');
                 const data = await response.json();
-                
-                // Clear and populate dropdown
+
                 profileSelect.innerHTML = '<option value="NEW">-- Create New Profile --</option>';
-                data.profiles.forEach(profile => {
+                (data.profiles || []).forEach(profile => {
                     const opt = document.createElement('option');
                     opt.value = profile;
                     opt.textContent = profile;
                     profileSelect.appendChild(opt);
                 });
-                
+
                 toggleNewProfileInput();
                 saveModal.showModal();
             } catch (err) {
-                alert("Error fetching profiles: " + err.message);
+                showError("Error fetching profiles: " + err.message);
             }
         }
 
@@ -313,9 +336,11 @@
             if (profileSelect.value === "NEW") {
                 profileName = newProfileNameInput.value.trim();
                 if (!profileName) {
-                    alert("Please enter a profile name.");
+                    newProfileNameInput.focus();
+                    newProfileNameInput.style.borderColor = '#d93025';
                     return;
                 }
+                newProfileNameInput.style.borderColor = '';
             } else {
                 profileName = profileSelect.value;
             }
@@ -328,24 +353,35 @@
             try {
                 const response = await fetch('/save', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
+
                 if (!response.ok) {
                     const errData = await response.json();
                     throw new Error(errData.detail || 'Failed to save profile');
                 }
-                
+
                 const result = await response.json();
-                alert(result.message);
                 saveModal.close();
-                newProfileNameInput.value = "";
+                newProfileNameInput.value = '';
+                showToast('&#10003; ' + result.message);
             } catch (err) {
-                alert("Error saving profile: " + err.message);
+                showError("Error saving profile: " + err.message);
             }
+        }
+
+        // --- Helpers ---
+        function showError(msg) {
+            resultsDiv.innerHTML = `<div class="error-message"><strong>Error:</strong> ${msg}</div>`;
+        }
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'success-toast';
+            toast.innerHTML = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3100);
         }
     </script>
 </body>

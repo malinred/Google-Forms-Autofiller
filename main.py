@@ -16,7 +16,7 @@ from model_test_inference import (
 # Model Configuration
 # -----------------------------------------------------------------------
 
-MODEL_PATH = "./model_info/checkpoint-800"
+MODEL_PATH = "d:/Sem6/Computer Vision/End Sem/Google-Forms-Autofiller/model_info/checkpoint-800/checkpoint-800"
 print(f"[Init] Loading model and processor from {MODEL_PATH}...")
 model = LayoutLMv3ForTokenClassification.from_pretrained(MODEL_PATH)
 processor = LayoutLMv3Processor.from_pretrained(MODEL_PATH)

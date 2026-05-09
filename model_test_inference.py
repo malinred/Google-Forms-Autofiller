@@ -11,9 +11,10 @@ from paddleocr import PaddleOCR
 # PaddleOCR Singleton Setup (Step 9)
 # -----------------------------------------------------------------------
 
-# Initialize PaddleOCR singleton using the stable 2.8.1 engine
-# Use enable_mkldnn=False to avoid the specific CPU instruction bug
-ocr_engine = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False, enable_mkldnn=False)
+# Initialize PaddleOCR singleton using the updated PaddleOCR (built on PaddleX v3)
+# It now uses simpler parameters. Deprecated 'use_angle_cls' is replaced by 'use_textline_orientation'.
+# enable_mkldnn=False is required to avoid PIR conversion errors on Windows.
+ocr_engine = PaddleOCR(use_textline_orientation=True, lang='en', enable_mkldnn=False)
 
 # -----------------------------------------------------------------------
 # Preprocessing Pipeline (Steps 1-8)
@@ -69,16 +70,26 @@ def get_ocr_words_and_boxes(image_cv):
     h, w = image_cv.shape[:2]
 
     try:
-        results = ocr_engine.ocr(image_cv, cls=True)
-        if results and results[0]:
-            for line in results[0]:
-                poly = line[0]
-                text, conf = line[1]
+        # Use predict() as the modern PaddleX-based OCR method
+        # Result is a list of dicts. We take the first one.
+        results_list = ocr_engine.predict(image_cv)
+        if results_list and len(results_list) > 0:
+            res = results_list[0]
+            # PaddleX v3 output format: rec_texts, rec_scores, dt_polys
+            texts = res.get('rec_texts', [])
+            scores = res.get('rec_scores', [])
+            polys = res.get('dt_polys', [])
+
+            for text, conf, poly in zip(texts, scores, polys):
                 # Lower threshold to 0.60 for real-world phone photos
                 if conf >= 0.60:
                     words.append(text)
-                    xs = [p[0] for p in poly]
-                    ys = [p[1] for p in poly]
+                    # Poly is usually [x1, y1, x2, y2, x3, y3, x4, y4] or similar
+                    # Flatten it if it's nested
+                    flat_poly = np.array(poly).reshape(-1, 2)
+                    xs = flat_poly[:, 0]
+                    ys = flat_poly[:, 1]
+                    
                     # Normalize and CLIP for LayoutLMv3
                     box = [
                         max(0, min(1000, int(1000 * min(xs) / w))),
