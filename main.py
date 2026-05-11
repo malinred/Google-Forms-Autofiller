@@ -1,6 +1,6 @@
 import sys
 import math
-import fitz  # PyMuPDF
+import fitz
 from PIL import Image
 import torch
 from transformers import LayoutLMv3Processor, LayoutLMv3ForTokenClassification
@@ -9,30 +9,23 @@ import cv2
 
 from model_test_inference import (
     preprocess_document, 
-    get_ocr_words_and_boxes
+    get_ocr_words_and_boxes,
+    extract_table_data,
+    classify_document,
+    extract_aadhaar_data,
+    extract_resume_data
 )
 
-# -----------------------------------------------------------------------
-# Model Configuration
-# -----------------------------------------------------------------------
-
-MODEL_PATH = "d:/Sem6/Computer Vision/End Sem/Google-Forms-Autofiller/model_info/checkpoint-800/checkpoint-800"
-print(f"[Init] Loading model and processor from {MODEL_PATH}...")
+# Model config
+MODEL_PATH = "./model_info/checkpoint-800"
 model = LayoutLMv3ForTokenClassification.from_pretrained(MODEL_PATH)
 processor = LayoutLMv3Processor.from_pretrained(MODEL_PATH)
 id2label = model.config.id2label
 
-# -----------------------------------------------------------------------
-# Entity Extraction & Pairing
-# -----------------------------------------------------------------------
-
+# Merge entities
 def get_entities(tokens, predictions, encoding):
-    """
-    Merge tokens into full entities (Question, Answer, etc.) with bounding boxes.
-    """
     entities = []
     current_entity = None
-    
     bboxes = encoding['bbox'][0].tolist()
     
     for i, (token, pred) in enumerate(zip(tokens, predictions)):
@@ -46,7 +39,6 @@ def get_entities(tokens, predictions, encoding):
             
         box = bboxes[i]
         
-        # Merge B- and I- tokens
         if label.startswith("B-"):
             if current_entity:
                 entities.append(current_entity)
@@ -69,7 +61,6 @@ def get_entities(tokens, predictions, encoding):
     if current_entity:
         entities.append(current_entity)
 
-    # Post-process: Consolidate boxes and clean text
     for ent in entities:
         xs = [b[0] for b in ent["boxes"]] + [b[2] for b in ent["boxes"]]
         ys = [b[1] for b in ent["boxes"]] + [b[3] for b in ent["boxes"]]
@@ -78,14 +69,12 @@ def get_entities(tokens, predictions, encoding):
                         (ent["bbox"][1] + ent["bbox"][3]) / 2]
         ent["text"] = " ".join(ent["text"].split())
 
-    # HEURISTIC: Merge adjacent entities of the same label on the same line
     if not entities:
         return []
         
     merged = []
     curr = entities[0]
     for next_ent in entities[1:]:
-        # If same label, same approximate Y level, and close horizontally
         same_label = curr["label"] == next_ent["label"]
         same_line = abs(curr["center"][1] - next_ent["center"][1]) < 15
         close_horiz = next_ent["bbox"][0] - curr["bbox"][2] < 50
@@ -93,7 +82,6 @@ def get_entities(tokens, predictions, encoding):
         if same_label and same_line and close_horiz:
             curr["text"] += " " + next_ent["text"]
             curr["boxes"].extend(next_ent["boxes"])
-            # Update bbox and center
             xs = [curr["bbox"][0], curr["bbox"][2], next_ent["bbox"][0], next_ent["bbox"][2]]
             ys = [curr["bbox"][1], curr["bbox"][3], next_ent["bbox"][1], next_ent["bbox"][3]]
             curr["bbox"] = [min(xs), min(ys), max(xs), max(ys)]
@@ -106,14 +94,10 @@ def get_entities(tokens, predictions, encoding):
         
     return merged
 
+# Pair Q&A
 def pair_entities(entities):
-    """
-    Spatial pairing of Questions and Answers.
-    """
     questions = [e for e in entities if e["label"].upper() == "QUESTION"]
     answers = [e for e in entities if e["label"].upper() == "ANSWER"]
-    
-    # Use a dictionary to group answers by question
     q_to_a = {}
     
     for ans in answers:
@@ -126,14 +110,10 @@ def pair_entities(entities):
             dist = math.sqrt((ax - qx)**2 + (ay - qy)**2)
             score = dist
             
-            # Heavy penalty if answer is above the question
             if ay < q["bbox"][1] - 5:
                 score *= 20.0
-            
-            # Favor horizontal alignment (Answer to the right of Question)
             if ax > q["bbox"][0] and abs(ay - qy) < 20:
                 score *= 0.3
-            # Favor vertical alignment (Answer below Question)
             elif ay > q["bbox"][3] and abs(ax - qx) < 100:
                 score *= 0.5
                 
@@ -147,21 +127,14 @@ def pair_entities(entities):
                 q_to_a[q_text] = []
             q_to_a[q_text].append(ans["text"])
             
-    # Format as list of strings "Field: Value"
     results = []
     for q, a_list in q_to_a.items():
         results.append((q, ", ".join(a_list)))
             
     return results
 
-# -----------------------------------------------------------------------
-# Processing Functions
-# -----------------------------------------------------------------------
-
+# Run inference
 def run_inference(image, words, boxes):
-    """
-    Run LayoutLM inference and return paired Q&A.
-    """
     if not words:
         return []
 
@@ -177,7 +150,6 @@ def run_inference(image, words, boxes):
     with torch.no_grad():
         outputs = model(**encoding)
 
-    # Use squeeze(0) to only remove batch dimension, avoids 0-dim tensor issues
     predictions = outputs.logits.argmax(-1).squeeze(0).tolist()
     tokens = processor.tokenizer.convert_ids_to_tokens(
         encoding["input_ids"].squeeze(0).tolist()
@@ -189,32 +161,24 @@ def run_inference(image, words, boxes):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python main.py <file_path>")
         return
 
     file_path = sys.argv[1]
     
     if file_path.lower().endswith(".pdf"):
         doc = fitz.open(file_path)
-        print(f"[PDF] Opened: {file_path} ({len(doc)} pages)")
         
         for page_num in range(len(doc)):
-            print(f"\n--- Processing PDF Page {page_num + 1} ---")
             page = doc[page_num]
-            
-            # Step 0: PDF Page Routing
             native_text = page.get_text("text").strip()
             
             if native_text:
-                print(f"[PDF] Page {page_num + 1}: Using native text layer")
                 words_data = page.get_text("words")
                 words = []
                 boxes = []
                 p_width, p_height = page.rect.width, page.rect.height
                 for wd in words_data:
-                    # wd: (x0, y0, x1, y1, "word", block_no, line_no, word_no)
                     words.append(wd[4])
-                    # Normalize and CLIP for LayoutLMv3
                     box = [
                         max(0, min(1000, int(1000 * wd[0] / p_width))),
                         max(0, min(1000, int(1000 * wd[1] / p_height))),
@@ -222,43 +186,60 @@ def main():
                         max(0, min(1000, int(1000 * wd[3] / p_height)))
                     ]
                     boxes.append(box)
-                
-                # Render page for LayoutLMv3 background
                 pix = page.get_pixmap(dpi=300)
                 page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             else:
-                print(f"[PDF] Page {page_num + 1}: No native text found, using OCR pipeline")
                 pix = page.get_pixmap(dpi=300)
                 img_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
                 processed_img_bgr = preprocess_document(img_pil)
                 words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
-                # Convert BGR back to RGB PIL for LayoutLMv3
                 page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
             
-            pairs = run_inference(page_img, words, boxes)
+            doc_type = classify_document(words)
+            
+            if doc_type == "aadhaar":
+                pairs = extract_aadhaar_data(page_img)
+                if not pairs:
+                    pairs = run_inference(page_img, words, boxes)
+            elif doc_type == "resume":
+                native_text = page.get_text("text").strip()
+                pairs = extract_resume_data(raw_text=native_text, words=words)
+            else:
+                pairs = run_inference(page_img, words, boxes)
+            
+            img_for_table = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
+            tables = extract_table_data(img_for_table, words, boxes)
             
             if pairs:
-                print(f"\nExtracted Fields (Page {page_num + 1}):")
                 for q, a in pairs:
-                    print(f"  {q}: {a}")
-            else:
-                print(f"No Q&A pairs detected on Page {page_num + 1}.")
+                    print(f"{q}: {a}")
+
+            if tables:
+                for table in tables:
+                    print(f"Table HTML: {table['html'][:100]}...")
     else:
-        # Assume Image input
-        print(f"[Image] Processing: {file_path}")
         processed_img_bgr = preprocess_document(file_path)
         words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
-        # Convert BGR back to RGB PIL for LayoutLMv3
         page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
-        pairs = run_inference(page_img, words, boxes)
+        doc_type = classify_document(words)
+        
+        if doc_type == "aadhaar":
+            pairs = extract_aadhaar_data(page_img)
+            if not pairs:
+                pairs = run_inference(page_img, words, boxes)
+        elif doc_type == "resume":
+            pairs = extract_resume_data(raw_text=None, words=words)
+        else:
+            pairs = run_inference(page_img, words, boxes)
         
         if pairs:
-            print("\nExtracted Fields:")
             for q, a in pairs:
-                print(f"  {q}: {a}")
-        else:
-            print("No Q&A pairs detected.")
+                print(f"{q}: {a}")
+        
+        tables = extract_table_data(processed_img_bgr, words, boxes)
+        if tables:
+            for table in tables:
+                print(f"Table HTML: {table['html'][:100]}...")
 
 if __name__ == "__main__":
     main()

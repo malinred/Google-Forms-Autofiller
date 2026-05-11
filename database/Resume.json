@@ -1,0 +1,12 @@
+{
+    "Email": "ayush.j.daniel@gmail.com",
+    "Phone": "+91-9100458415",
+    "Name": "Ayush John Daniel",
+    "Education": "\u2022Amrita Vishwa Vidya Peetham, Bangalore",
+    "CGPA": "7.9",
+    "Percentage": "76%",
+    "Projects": "Multi-Class Classification of Ocular Diseases through Deep Learning | 87.50% accuracy. | Automated Seismic Phase Detection Using Cloud Containerization | Jul 2025 - Dec 2025 | Flask-MongoDB Based Real-Time Auction Platform",
+    "Project Tools": "Python, Pandas, Tensflow | Python, Docker, Kubernetes, Flask, ObsPy | Python, Flask, MongoDB, Flask-Session | Python, AnyLogic, OpenCSV, YOLOv8",
+    "Certifications": "\u2022Supervised Machine Learning: Regression and Classification, Stanford University",
+    "Achievements": "\u20221st place in Command level inter-school debate competition"
+}

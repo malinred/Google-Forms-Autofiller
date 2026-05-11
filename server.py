@@ -1,6 +1,6 @@
 import os
 import shutil
-import fitz  # PyMuPDF
+import fitz
 import json
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
@@ -9,24 +9,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import uvicorn
 import cv2
+import numpy as np
 
 from main import run_inference
-from model_test_inference import preprocess_document, get_ocr_words_and_boxes
+from model_test_inference import (
+    preprocess_document, 
+    get_ocr_words_and_boxes, 
+    extract_table_data,
+    classify_document,
+    extract_aadhaar_data,
+    extract_resume_data
+)
 
 app = FastAPI(title="Google Forms Autofiller API")
 
-# -----------------------------------------------------------------------
-# CORS — allow the Chrome extension and localhost frontend to call the API
-# -----------------------------------------------------------------------
+# Setup CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten this in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Setup directories
+# Setup dirs
 STATIC_DIR = "static"
 TEMP_DIR = "temp_uploads"
 DB_DIR = "database"
@@ -36,7 +42,6 @@ os.makedirs(DB_DIR, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
     index_path = os.path.join(STATIC_DIR, "index.html")
@@ -45,14 +50,10 @@ async def read_index():
     with open(index_path, "r") as f:
         return f.read()
 
-
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
-    """
-    Upload a document, process it through the LayoutLMv3 pipeline, and return extracted fields.
-    """
+    # Upload doc
     file_path = os.path.join(TEMP_DIR, file.filename)
-
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -61,17 +62,13 @@ async def upload_document(file: UploadFile = File(...)):
 
     try:
         final_results = []
-
         if file.filename.lower().endswith(".pdf"):
             doc = fitz.open(file_path)
-            print(f"[Server] Processing PDF: {file.filename} ({len(doc)} pages)")
-
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 native_text = page.get_text("text").strip()
 
                 if native_text:
-                    print(f"[Server] PDF Page {page_num + 1}: Using native text layer")
                     words_data = page.get_text("words")
                     words = []
                     boxes = []
@@ -88,56 +85,77 @@ async def upload_document(file: UploadFile = File(...)):
                     pix = page.get_pixmap(dpi=300)
                     page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 else:
-                    print(f"[Server] PDF Page {page_num + 1}: Image-only, using OCR pipeline")
                     pix = page.get_pixmap(dpi=300)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     processed_img_bgr = preprocess_document(img)
                     words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
                     page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
 
-                pairs = run_inference(page_img, words, boxes)
-                final_results.append({"page": page_num + 1, "pairs": pairs})
+                doc_type = classify_document(words)
 
+                if doc_type == "aadhaar":
+                    pairs = extract_aadhaar_data(page_img)
+                    # If QR failed, fall back to LayoutLMv3
+                    if pairs and pairs[0][0] == "Error":
+                        pairs = run_inference(page_img, words, boxes)
+                elif doc_type == "resume":
+                    pairs = extract_resume_data(raw_text=native_text, words=words)
+                else:
+                    pairs = run_inference(page_img, words, boxes)
+                
+                img_for_table = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
+                tables = extract_table_data(img_for_table, words, boxes)
+                
+                final_results.append({
+                    "page": page_num + 1, 
+                    "type": doc_type,
+                    "pairs": pairs,
+                    "tables": tables
+                })
         else:
-            print(f"[Server] Processing Image: {file.filename}")
+            original_img_pil = Image.open(file_path)
             processed_img_bgr = preprocess_document(file_path)
             words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
             page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
-            pairs = run_inference(page_img, words, boxes)
-            final_results.append({"page": 1, "pairs": pairs})
+            doc_type = classify_document(words)
+
+            if doc_type == "aadhaar":
+                pairs = extract_aadhaar_data(original_img_pil)
+                # If QR failed, fall back to LayoutLMv3
+                if pairs and pairs[0][0] == "Error":
+                    pairs = run_inference(page_img, words, boxes)
+            elif doc_type == "resume":
+                pairs = extract_resume_data(raw_text=None, words=words)
+            else:
+                pairs = run_inference(page_img, words, boxes)
+            
+            tables = extract_table_data(processed_img_bgr, words, boxes)
+            final_results.append({
+                "page": 1, 
+                "type": doc_type,
+                "pairs": pairs,
+                "tables": tables
+            })
 
         return {"filename": file.filename, "results": final_results}
-
     except Exception as e:
-        print(f"[Error] {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
-
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
 
-
 @app.get("/profiles")
 async def get_profiles():
-    """
-    List all available profile names in the database directory.
-    """
+    # List profiles
     try:
         profiles = [f.replace(".json", "") for f in os.listdir(DB_DIR) if f.endswith(".json")]
         return {"profiles": sorted(profiles)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list profiles: {str(e)}")
 
-
-# -----------------------------------------------------------------------
-# NEW ENDPOINT — required by content.js to fetch a specific profile
-# -----------------------------------------------------------------------
 @app.get("/profiles/{profile_name}")
 async def get_profile(profile_name: str):
-    """
-    Return the JSON data for a specific profile by name.
-    """
-    # Sanitize to prevent directory traversal
+    # Get profile
     safe_name = "".join(c for c in profile_name if c.isalnum() or c in ('-', '_')).strip()
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid profile name")
@@ -149,19 +167,15 @@ async def get_profile(profile_name: str):
     with open(profile_path, "r") as f:
         return json.load(f)
 
-
 @app.post("/save")
 async def save_profile(payload: dict):
-    """
-    Save or update the edited profile data into a specific profile JSON file.
-    """
+    # Save profile
     try:
         profile_name = payload.get("profile_name")
         if not profile_name:
             raise HTTPException(status_code=400, detail="Profile name is required")
 
         document_data = payload.get("document_data", {})
-
         new_fields = {}
         for res in document_data.get("results", []):
             for pair in res.get("pairs", []):
@@ -173,25 +187,17 @@ async def save_profile(payload: dict):
             raise HTTPException(status_code=400, detail="Invalid profile name")
 
         save_path = os.path.join(DB_DIR, f"{safe_profile_name}.json")
-
         profile_data = {}
         if os.path.exists(save_path):
             with open(save_path, "r") as f:
                 profile_data = json.load(f)
 
         profile_data.update(new_fields)
-
         with open(save_path, "w") as f:
             json.dump(profile_data, f, indent=4)
-
-        print(f"[Server] Saved/Updated profile: {save_path}")
         return {"status": "success", "message": f"Successfully saved to profile: {safe_profile_name}"}
-
     except Exception as e:
-        print(f"[Error] Save profile error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to save profile: {str(e)}")
 
-
 if __name__ == "__main__":
-    print("Starting server on http://localhost:8000")
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

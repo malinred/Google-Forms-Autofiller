@@ -118,6 +118,18 @@
             font-size: 1rem;
         }
         .empty-state { color: #9aa0a6; font-style: italic; padding: 1.5rem; text-align: center; }
+        .extracted-table-wrap { 
+            margin-top: 1.5rem; 
+            overflow-x: auto; 
+            border: 1px solid #e0e0e0; 
+            border-radius: 8px; 
+            background: #fff;
+            padding: 1rem;
+        }
+        .extracted-table-wrap h4 { margin-top: 0; color: #5f6368; font-size: 0.9rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; }
+        .extracted-table-wrap table { margin-top: 0.5rem; border: none; }
+        .extracted-table-wrap td, .extracted-table-wrap th { font-size: 0.9rem; }
+        .copy-hint { font-size: 0.75rem; color: #1a73e8; margin-top: 0.5rem; display: block; }
     </style>
 </head>
 <body>
@@ -286,6 +298,18 @@
                 }
 
                 html += `</tbody></table>`;
+
+                // Add extracted tables if they exist
+                if (res.tables && res.tables.length > 0) {
+                    res.tables.forEach((table, tableIdx) => {
+                        html += `
+                        <div class="extracted-table-wrap">
+                            <h4>Extracted Table ${tableIdx + 1}</h4>
+                            ${table.html}
+                            <span class="copy-hint">Tip: You can highlight and copy the table above.</span>
+                        </div>`;
+                    });
+                }
             });
 
             resultsDiv.innerHTML = html;

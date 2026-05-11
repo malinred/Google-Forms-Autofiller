@@ -1,0 +1,9 @@
+{
+    "BILL TO:": "TechNexus Corp, 45 Innovation Blvd, Suite 200, San Francisco, CA 94105, United States",
+    "Description": "Cloud Infrastructure Setup, Monthly Managed Services, Cybersecurity Audit, Data Migration",
+    "Quantity": "1, 12, 1, 50, 5",
+    "Unit Price": "$2,500.00, $450.00, $1,200.00, $15.00, $200.00",
+    "Total": "$2,500.00, $5,400.00, $1,200.00, $750.00, $1,000.00",
+    "Subtotal:": "$10,850.00",
+    "Tax (8.0%):": "$868.00"
+}
