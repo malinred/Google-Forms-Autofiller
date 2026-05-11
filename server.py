@@ -22,6 +22,7 @@ from model_test_inference import (
 )
 
 app = FastAPI(title="Google Forms Autofiller API")
+print("DEBUG: FastAPI app initialized")
 
 # Setup CORS
 app.add_middleware(
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+print("DEBUG: CORS middleware added")
 
 # Setup dirs
 STATIC_DIR = "static"
@@ -39,8 +41,10 @@ DB_DIR = "database"
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(DB_DIR, exist_ok=True)
+print("DEBUG: Directories created")
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+print("DEBUG: Static files mounted")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
@@ -52,6 +56,7 @@ async def read_index():
 
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
+    print("DEBUG: Upload endpoint called")
     # Upload doc
     file_path = os.path.join(TEMP_DIR, file.filename)
     try:
@@ -60,15 +65,19 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
+    print(f"DEBUG: File saved to {file_path}")
     try:
         final_results = []
         if file.filename.lower().endswith(".pdf"):
+            print("DEBUG: Processing PDF file")
             doc = fitz.open(file_path)
             for page_num in range(len(doc)):
+                print(f"DEBUG: Processing page {page_num + 1}")
                 page = doc[page_num]
                 native_text = page.get_text("text").strip()
 
                 if native_text:
+                    print("DEBUG: Using native PDF text extraction")
                     words_data = page.get_text("words")
                     words = []
                     boxes = []
@@ -85,6 +94,7 @@ async def upload_document(file: UploadFile = File(...)):
                     pix = page.get_pixmap(dpi=300)
                     page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 else:
+                    print("DEBUG: Using OCR for PDF page")
                     pix = page.get_pixmap(dpi=300)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     processed_img_bgr = preprocess_document(img)
@@ -92,17 +102,23 @@ async def upload_document(file: UploadFile = File(...)):
                     page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
 
                 doc_type = classify_document(words)
+                print(f"DEBUG: Document classified as: {doc_type}")
 
                 if doc_type == "aadhaar":
+                    print("DEBUG: Extracting Aadhaar data")
                     pairs = extract_aadhaar_data(page_img)
                     # If QR failed, fall back to LayoutLMv3
-                    if pairs and pairs[0][0] == "Error":
+                    if not pairs or (pairs and pairs[0][0] == "Error"):
+                        print("DEBUG: Aadhaar QR failed, falling back to LayoutLMv3")
                         pairs = run_inference(page_img, words, boxes)
                 elif doc_type == "resume":
+                    print("DEBUG: Extracting resume data")
                     pairs = extract_resume_data(raw_text=native_text, words=words)
                 else:
+                    print("DEBUG: Running general inference")
                     pairs = run_inference(page_img, words, boxes)
                 
+                print("DEBUG: Extracting table data")
                 img_for_table = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
                 tables = extract_table_data(img_for_table, words, boxes)
                 
@@ -113,22 +129,29 @@ async def upload_document(file: UploadFile = File(...)):
                     "tables": tables
                 })
         else:
+            print("DEBUG: Processing image file")
             original_img_pil = Image.open(file_path)
             processed_img_bgr = preprocess_document(file_path)
             words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
             page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
             doc_type = classify_document(words)
+            print(f"DEBUG: Document classified as: {doc_type}")
 
             if doc_type == "aadhaar":
+                print("DEBUG: Extracting Aadhaar data")
                 pairs = extract_aadhaar_data(original_img_pil)
                 # If QR failed, fall back to LayoutLMv3
-                if pairs and pairs[0][0] == "Error":
+                if not pairs or (pairs and pairs[0][0] == "Error"):
+                    print("DEBUG: Aadhaar QR failed, falling back to LayoutLMv3")
                     pairs = run_inference(page_img, words, boxes)
             elif doc_type == "resume":
+                print("DEBUG: Extracting resume data")
                 pairs = extract_resume_data(raw_text=None, words=words)
             else:
+                print("DEBUG: Running general inference")
                 pairs = run_inference(page_img, words, boxes)
             
+            print("DEBUG: Extracting table data")
             tables = extract_table_data(processed_img_bgr, words, boxes)
             final_results.append({
                 "page": 1, 
@@ -137,12 +160,14 @@ async def upload_document(file: UploadFile = File(...)):
                 "tables": tables
             })
 
+        print(f"DEBUG: Processing complete, returning {len(final_results)} results")
         return {"filename": file.filename, "results": final_results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+            print("DEBUG: Temporary file cleaned up")
 
 @app.get("/profiles")
 async def get_profiles():

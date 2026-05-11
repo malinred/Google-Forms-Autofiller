@@ -5,8 +5,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Fetch available profiles from local server
     try {
+        console.log('[Popup] Fetching profiles from server');
         const response = await fetch('http://localhost:8000/profiles');
         const data = await response.json();
+        console.log('[Popup] Profiles received:', data.profiles);
 
         profileSelect.innerHTML = '';
         if (data.profiles && data.profiles.length > 0) {
@@ -17,11 +19,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 profileSelect.appendChild(option);
             });
             autofillBtn.disabled = false;
+            console.log('[Popup] Profiles loaded successfully');
         } else {
             profileSelect.innerHTML = '<option value="">No profiles found</option>';
+            console.log('[Popup] No profiles found');
         }
     } catch (error) {
-        console.error('Error fetching profiles:', error);
+        console.error('[Popup] Error fetching profiles:', error);
         statusDiv.textContent = 'Error: Could not connect to local server at localhost:8000. Make sure it is running.';
         statusDiv.style.color = '#c00';
     }
@@ -30,12 +34,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const selectedProfile = profileSelect.value;
         if (!selectedProfile) return;
 
+        console.log('[Popup] Autofill button clicked for profile:', selectedProfile);
         autofillBtn.disabled = true;
         statusDiv.style.color = '#666';
         statusDiv.textContent = 'Autofilling form...';
 
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            console.log('[Popup] Current tab URL:', tab.url);
 
             if (!tab.url || !tab.url.includes('docs.google.com/forms')) {
                 statusDiv.textContent = 'Error: Please navigate to a Google Form first.';
@@ -44,10 +50,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
+            console.log('[Popup] Sending autofill message to content script');
             chrome.tabs.sendMessage(tab.id, {
                 action: 'autofill',
                 profileName: selectedProfile
             }, (response) => {
+                console.log('[Popup] Received response from content script:', response);
                 autofillBtn.disabled = false;
                 if (chrome.runtime.lastError) {
                     statusDiv.textContent = 'Error: ' + chrome.runtime.lastError.message;
@@ -61,6 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         } catch (error) {
+            console.error('[Popup] Error:', error);
             autofillBtn.disabled = false;
             statusDiv.textContent = 'Error: ' + error.message;
             statusDiv.style.color = '#c00';

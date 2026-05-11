@@ -7,7 +7,6 @@ import torch
 import numpy as np
 import cv2
 from paddleocr import PaddleOCR, PPStructure
-from pyzbar.pyzbar import decode as pyzbar_decode
 
 try:
     from pyaadhaar.decode import AadhaarSecureQr, AadhaarOldQr
@@ -21,6 +20,7 @@ table_engine = PPStructure(show_log=False, layout=True, lang='en', image_orienta
 
 # Preprocess doc
 def preprocess_document(image_input):
+    print("DEBUG: Starting document preprocessing")
     if isinstance(image_input, str):
         if not os.path.exists(image_input):
             raise FileNotFoundError(f"Image file not found: {image_input}")
@@ -34,12 +34,14 @@ def preprocess_document(image_input):
         raise ValueError("Failed to load image")
 
     h, w = img_cv.shape[:2]
+    print(f"DEBUG: Image loaded, size: {w}x{h}")
 
     # Resize
     min_long_edge = 1200
     if max(h, w) < min_long_edge:
         scale = min_long_edge / max(h, w)
         img_cv = cv2.resize(img_cv, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+        print(f"DEBUG: Image resized to {int(w * scale)}x{int(h * scale)}")
 
     # CLAHE
     lab = cv2.cvtColor(img_cv, cv2.COLOR_BGR2LAB)
@@ -51,10 +53,12 @@ def preprocess_document(image_input):
 
     # Denoise
     final_img = cv2.fastNlMeansDenoisingColored(final_img, None, 10, 10, 7, 21)
+    print("DEBUG: Document preprocessing completed")
     return final_img
 
 # PaddleOCR inference
 def get_ocr_words_and_boxes(image_cv):
+    print("DEBUG: Starting OCR")
     words = []
     boxes = []
     h, w = image_cv.shape[:2]
@@ -76,113 +80,52 @@ def get_ocr_words_and_boxes(image_cv):
                         max(0, min(1000, int(1000 * max(ys) / h)))
                     ]
                     boxes.append(box)
+        print(f"DEBUG: OCR completed, found {len(words)} words")
     except Exception:
-        pass
+        print("DEBUG: OCR failed")
 
     return words, boxes
 
 # Classify doc
 def classify_document(words):
+    print("DEBUG: Starting document classification")
     text = " ".join(words).lower()
     
-    # Aadhaar check
+    
     aadhaar_keywords = ["government of india", "aadhaar", "unique identification", "enrollment", "male", "female"]
     aadhaar_pattern = r"\d{4}\s\d{4}\s\d{4}"
     if any(k in text for k in aadhaar_keywords) or re.search(aadhaar_pattern, text):
+        print("DEBUG: Classified as Aadhaar")
         return "aadhaar"
         
-    # Resume check
+    
     resume_keywords = ["experience", "education", "skills", "projects", "summary", "objective", "achievement", "curriculum vitae"]
     resume_hits = sum(1 for k in resume_keywords if k in text)
     if resume_hits >= 3:
+        print("DEBUG: Classified as Resume")
         return "resume"
         
+    print("DEBUG: Classified as General")
     return "general"
 
-def _try_pyzbar_decode(image_cv):
-    """
-    Attempt to decode a QR code from a cv2 image using pyzbar.
-    Returns the raw string data if found, else None.
-    """
-    # Try directly on the colour image
-    results = pyzbar_decode(image_cv)
-    if results:
-        return results[0].data.decode("utf-8", errors="ignore")
-
-    # Grayscale
-    gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
-    results = pyzbar_decode(gray)
-    if results:
-        return results[0].data.decode("utf-8", errors="ignore")
-
-    # Otsu binarisation
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    results = pyzbar_decode(thresh)
-    if results:
-        return results[0].data.decode("utf-8", errors="ignore")
-
-    # Inverted binarisation (handles light-on-dark QRs)
-    results = pyzbar_decode(cv2.bitwise_not(thresh))
-    if results:
-        return results[0].data.decode("utf-8", errors="ignore")
-
-    # Adaptive threshold
-    adaptive = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-    )
-    results = pyzbar_decode(adaptive)
-    if results:
-        return results[0].data.decode("utf-8", errors="ignore")
-
-    return None
-
-# Aadhaar QR extraction using pyzbar
+# Aadhaar QR extraction
 def extract_aadhaar_data(image_pil):
-    """
-    Attempts to read the Aadhaar QR code (always bottom-right) using pyzbar.
-    Tries multiple crops and upscale factors for robustness.
-    Returns a list of (label, value) pairs, or an error pair if unreadable.
-    """
+    print("DEBUG: Starting Aadhaar QR extraction")
     try:
+        detector = cv2.QRCodeDetector()
         image_cv = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-        h, w = image_cv.shape[:2]
-
-        raw_data = None
-
-        # Always try the full image first
-        raw_data = _try_pyzbar_decode(image_cv)
-
-        # If that fails, try progressively larger crops of the bottom-right corner
-        # Aadhaar QR is reliably placed there
-        if not raw_data:
-            for crop_fraction in [0.35, 0.45, 0.55]:
-                crop_y = int(h * (1 - crop_fraction))
-                crop_x = int(w * (1 - crop_fraction))
-                crop = image_cv[crop_y:, crop_x:]
-
-                # Try at native crop size
-                raw_data = _try_pyzbar_decode(crop)
-                if raw_data:
-                    break
-
-                # Try upscaled versions of the crop
-                for scale in [2, 4, 6]:
-                    upscaled = cv2.resize(
-                        crop,
-                        (crop.shape[1] * scale, crop.shape[0] * scale),
-                        interpolation=cv2.INTER_CUBIC
-                    )
-                    raw_data = _try_pyzbar_decode(upscaled)
-                    if raw_data:
-                        break
-
-                if raw_data:
-                    break
+        raw_data, points, _ = detector.detectAndDecode(image_cv)
 
         if not raw_data:
-            return [("Error", "QR code could not be read from this image")]
+            gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            raw_data, points, _ = detector.detectAndDecode(thresh)
 
-        # Parse with pyaadhaar
+        if not raw_data:
+            print("DEBUG: No QR code found")
+            return []
+
+        print("DEBUG: QR code detected")
         if isSecureQr(raw_data):
             obj = AadhaarSecureQr(raw_data)
         else:
@@ -200,13 +143,15 @@ def extract_aadhaar_data(image_pil):
             except Exception:
                 pass
 
-        return pairs if pairs else [("Error", "QR code could not be read from this image")]
-
+        print(f"DEBUG: Aadhaar extraction completed, found {len(pairs)} fields")
+        return pairs
     except Exception:
-        return [("Error", "QR code could not be read from this image")]
+        print("DEBUG: Aadhaar extraction failed")
+        return []
 
 # Table extraction
 def extract_table_data(image_cv, words=None, boxes=None):
+    print("DEBUG: Starting table extraction")
     tables = []
     try:
         result = table_engine(image_cv)
@@ -220,11 +165,13 @@ def extract_table_data(image_cv, words=None, boxes=None):
                         "bbox": region.get('bbox', []),
                         "html": html
                     })
+        print(f"DEBUG: Table extraction completed, found {len(tables)} tables")
     except Exception:
-        pass
+        print("DEBUG: Table extraction failed")
 
     # Heuristic fallback
     if not tables and words and boxes:
+        print("DEBUG: Using heuristic table fallback")
         try:
             keywords = ["item", "qty", "quantity", "price", "amount", "total"]
             header_indices = [i for i, w in enumerate(words) if w.lower() in keywords]
@@ -247,13 +194,15 @@ def extract_table_data(image_cv, words=None, boxes=None):
                             "html": html,
                             "note": "heuristic"
                         })
+                        print("DEBUG: Heuristic table found")
         except Exception:
-            pass
+            print("DEBUG: Heuristic table extraction failed")
         
     return tables
 
 # Resume extraction
 def extract_resume_data(raw_text=None, words=None):
+    print("DEBUG: Starting resume extraction")
     if raw_text and raw_text.strip():
         full_text = raw_text
     elif words:
@@ -268,8 +217,9 @@ def extract_resume_data(raw_text=None, words=None):
             lines.append(" ".join(current_line))
         full_text = "\n".join(lines)
     else:
+        print("DEBUG: No text available for resume extraction")
         return []
-
+    
     text_flat = " ".join(full_text.splitlines())
     all_lines = [l.rstrip() for l in full_text.splitlines()]
     pairs = []
@@ -367,6 +317,7 @@ def extract_resume_data(raw_text=None, words=None):
         content = [l.strip() for l in sections["achievements"] if len(l.strip()) > 5]
         if content: pairs.append(("Achievements", content[0]))
 
+    print(f"DEBUG: Resume extraction completed, found {len(pairs)} fields")
     return pairs
 
 if __name__ == "__main__":

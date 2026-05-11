@@ -21,6 +21,7 @@ async function autofillForm(profileName) {
     const response = await fetch(`http://localhost:8000/profiles/${profileName}`);
     if (!response.ok) throw new Error('Failed to fetch profile data from server');
     const profileData = await response.json();
+    console.log('[Autofiller] Profile data loaded:', Object.keys(profileData));
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -33,6 +34,7 @@ async function autofillForm(profileName) {
         return { success: false, filledCount: 0, error: 'No questions found' };
     }
 
+    console.log(`[Autofiller] Found ${questions.length} questions`);
     let filledCount = 0;
 
     for (const q of questions) {
@@ -59,6 +61,7 @@ async function autofillForm(profileName) {
             'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], textarea'
         );
         if (textInput) {
+            console.log('[Autofiller] Filling text input');
             fillInput(textInput, matchedValue);
             filledCount++;
             continue;
@@ -68,6 +71,7 @@ async function autofillForm(profileName) {
         // Real selector from live Google Forms DOM: div[role="radio"][data-value]
         const radioOptions = q.querySelectorAll('div[role="radio"][data-value]');
         if (radioOptions.length > 0) {
+            console.log(`[Autofiller] Found ${radioOptions.length} radio options`);
             let matched = false;
             for (const radio of radioOptions) {
                 const radioValue = radio.getAttribute('data-value') || '';
@@ -92,6 +96,7 @@ async function autofillForm(profileName) {
         // Real selector: div[role="checkbox"][data-value]
         const checkboxOptions = q.querySelectorAll('div[role="checkbox"][data-value]');
         if (checkboxOptions.length > 0) {
+            console.log(`[Autofiller] Found ${checkboxOptions.length} checkbox options`);
             const valuesToCheck = matchedValue.split(',').map(v => v.trim().toLowerCase());
             for (const checkbox of checkboxOptions) {
                 const checkboxValue = (checkbox.getAttribute('data-value') || '').toLowerCase();
@@ -111,6 +116,7 @@ async function autofillForm(profileName) {
         // --- 4. Dropdown (select element) ---
         const dropdown = q.querySelector('select');
         if (dropdown) {
+            console.log('[Autofiller] Filling dropdown');
             for (const option of dropdown.options) {
                 if (option.text.toLowerCase() === matchedValue.toLowerCase()) {
                     dropdown.value = option.value;

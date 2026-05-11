@@ -141,7 +141,10 @@
             <p style="font-size: 1.1rem; color: #5f6368;">&#128196; Drop your document here or click to browse</p>
             <p style="font-size: 0.9rem; color: #9aa0a6;">Supports JPG, PNG, and PDF</p>
             <input type="file" id="file-input" accept="image/*,.pdf">
-            <button class="btn" type="button" onclick="document.getElementById('file-input').click(); event.stopPropagation();">Select File</button>
+            <div style="display:flex; gap:10px; justify-content:center;">
+                <button class="btn" type="button" onclick="document.getElementById('file-input').click(); event.stopPropagation();">Select File</button>
+                <button class="btn btn-secondary" type="button" onclick="openEditModal(); event.stopPropagation();">&#128221; Edit Profile</button>
+            </div>
         </div>
 
         <div id="loading">
@@ -176,13 +179,34 @@
         </div>
     </dialog>
 
+    <!-- Edit Profile Modal -->
+    <dialog id="edit-modal">
+        <div class="modal-header">
+            <h3 style="margin:0;">Select Profile to Edit</h3>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="edit-profile-select">Available Profiles</label>
+                <select id="edit-profile-select">
+                    <option value="" disabled selected>-- Select a profile --</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" type="button" onclick="document.getElementById('edit-modal').close()">Cancel</button>
+            <button class="btn" type="button" onclick="loadProfile()">Load Profile</button>
+        </div>
+    </dialog>
+
     <script>
         const fileInput = document.getElementById('file-input');
         const loading = document.getElementById('loading');
         const resultsDiv = document.getElementById('results');
         const uploadArea = document.getElementById('upload-area');
         const saveModal = document.getElementById('save-modal');
+        const editModal = document.getElementById('edit-modal');
         const profileSelect = document.getElementById('profile-select');
+        const editProfileSelect = document.getElementById('edit-profile-select');
         const newProfileNameInput = document.getElementById('new-profile-name');
         const newProfileGroup = document.getElementById('new-profile-group');
 
@@ -262,7 +286,7 @@
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <h2 style="margin:0;">Results: ${esc(currentData.filename)}</h2>
                     <div style="display:flex; gap:10px;">
-                        <button class="btn btn-secondary" type="button" onclick="window.print()">&#128438; Print</button>
+                        <button class="btn btn-secondary" type="button" onclick="openEditModal()">&#128221; Edit Profile</button>
                         <button class="btn btn-success" type="button" onclick="saveProfile()">&#128190; Save Profile</button>
                     </div>
                 </div>`;
@@ -327,6 +351,55 @@
         function removeField(pageIdx, pairIdx) {
             currentData.results[pageIdx].pairs.splice(pairIdx, 1);
             renderResults();
+        }
+
+        // --- Edit Profile ---
+        async function openEditModal() {
+            try {
+                const response = await fetch('/profiles');
+                const data = await response.json();
+                
+                editProfileSelect.innerHTML = '<option value="" disabled selected>-- Select a profile --</option>';
+                (data.profiles || []).forEach(profile => {
+                    const opt = document.createElement('option');
+                    opt.value = profile;
+                    opt.textContent = profile;
+                    editProfileSelect.appendChild(opt);
+                });
+                editModal.showModal();
+            } catch (err) {
+                showError("Error fetching profiles: " + err.message);
+            }
+        }
+
+        async function loadProfile() {
+            const profileName = editProfileSelect.value;
+            if (!profileName) return;
+
+            try {
+                const response = await fetch(`/profiles/${profileName}`);
+                if (!response.ok) throw new Error("Failed to load profile");
+                const profileData = await response.json();
+
+                // Convert profile data to currentData format
+                const pairs = Object.entries(profileData);
+                currentData = {
+                    filename: `Profile: ${profileName}`,
+                    results: [{
+                        page: 1,
+                        type: "profile_edit",
+                        pairs: pairs,
+                        tables: []
+                    }]
+                };
+
+                renderResults();
+                editModal.close();
+                // Scroll to results
+                resultsDiv.scrollIntoView({ behavior: 'smooth' });
+            } catch (err) {
+                showError("Error loading profile: " + err.message);
+            }
         }
 
         // --- Save Profile Modal ---

@@ -16,11 +16,13 @@ from model_test_inference import (
     extract_resume_data
 )
 
+print("DEBUG: Starting main.py - Loading model and processor")
 # Model config
 MODEL_PATH = "./model_info/checkpoint-800"
 model = LayoutLMv3ForTokenClassification.from_pretrained(MODEL_PATH)
 processor = LayoutLMv3Processor.from_pretrained(MODEL_PATH)
 id2label = model.config.id2label
+print("DEBUG: Model and processor loaded successfully")
 
 # Merge entities
 def get_entities(tokens, predictions, encoding):
@@ -135,7 +137,9 @@ def pair_entities(entities):
 
 # Run inference
 def run_inference(image, words, boxes):
+    print("DEBUG: Starting run_inference")
     if not words:
+        print("DEBUG: No words found, returning empty")
         return []
 
     encoding = processor(
@@ -157,22 +161,29 @@ def run_inference(image, words, boxes):
     
     entities = get_entities(tokens, predictions, encoding)
     pairs = pair_entities(entities)
+    print(f"DEBUG: run_inference completed, found {len(pairs)} pairs")
     return pairs
 
 def main():
+    print("DEBUG: main() started")
     if len(sys.argv) < 2:
+        print("DEBUG: No file path provided")
         return
 
     file_path = sys.argv[1]
+    print(f"DEBUG: Processing file: {file_path}")
     
     if file_path.lower().endswith(".pdf"):
+        print("DEBUG: Processing PDF file")
         doc = fitz.open(file_path)
         
         for page_num in range(len(doc)):
+            print(f"DEBUG: Processing page {page_num + 1}")
             page = doc[page_num]
             native_text = page.get_text("text").strip()
             
             if native_text:
+                print("DEBUG: Using native PDF text extraction")
                 words_data = page.get_text("words")
                 words = []
                 boxes = []
@@ -189,6 +200,7 @@ def main():
                 pix = page.get_pixmap(dpi=300)
                 page_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             else:
+                print("DEBUG: Using OCR for PDF page")
                 pix = page.get_pixmap(dpi=300)
                 img_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 processed_img_bgr = preprocess_document(img_pil)
@@ -196,48 +208,65 @@ def main():
                 page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
             
             doc_type = classify_document(words)
+            print(f"DEBUG: Document classified as: {doc_type}")
             
             if doc_type == "aadhaar":
+                print("DEBUG: Extracting Aadhaar data")
                 pairs = extract_aadhaar_data(page_img)
                 if not pairs:
+                    print("DEBUG: Aadhaar QR failed, falling back to LayoutLMv3")
                     pairs = run_inference(page_img, words, boxes)
             elif doc_type == "resume":
+                print("DEBUG: Extracting resume data")
                 native_text = page.get_text("text").strip()
                 pairs = extract_resume_data(raw_text=native_text, words=words)
             else:
+                print("DEBUG: Running general inference")
                 pairs = run_inference(page_img, words, boxes)
             
+            print("DEBUG: Extracting table data")
             img_for_table = cv2.cvtColor(np.array(page_img), cv2.COLOR_RGB2BGR)
             tables = extract_table_data(img_for_table, words, boxes)
             
             if pairs:
+                print(f"DEBUG: Found {len(pairs)} Q&A pairs")
                 for q, a in pairs:
                     print(f"{q}: {a}")
 
             if tables:
+                print(f"DEBUG: Found {len(tables)} tables")
                 for table in tables:
                     print(f"Table HTML: {table['html'][:100]}...")
     else:
+        print("DEBUG: Processing image file")
         processed_img_bgr = preprocess_document(file_path)
         words, boxes = get_ocr_words_and_boxes(processed_img_bgr)
         page_img = Image.fromarray(cv2.cvtColor(processed_img_bgr, cv2.COLOR_BGR2RGB))
         doc_type = classify_document(words)
+        print(f"DEBUG: Document classified as: {doc_type}")
         
         if doc_type == "aadhaar":
+            print("DEBUG: Extracting Aadhaar data")
             pairs = extract_aadhaar_data(page_img)
             if not pairs:
+                print("DEBUG: Aadhaar QR failed, falling back to LayoutLMv3")
                 pairs = run_inference(page_img, words, boxes)
         elif doc_type == "resume":
+            print("DEBUG: Extracting resume data")
             pairs = extract_resume_data(raw_text=None, words=words)
         else:
+            print("DEBUG: Running general inference")
             pairs = run_inference(page_img, words, boxes)
         
         if pairs:
+            print(f"DEBUG: Found {len(pairs)} Q&A pairs")
             for q, a in pairs:
                 print(f"{q}: {a}")
         
+        print("DEBUG: Extracting table data")
         tables = extract_table_data(processed_img_bgr, words, boxes)
         if tables:
+            print(f"DEBUG: Found {len(tables)} tables")
             for table in tables:
                 print(f"Table HTML: {table['html'][:100]}...")
 
